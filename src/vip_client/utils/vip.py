@@ -18,7 +18,7 @@ import requests
 ########################### VARIABLES & ERRORS ################################
 # -----------------------------------------------------------------------------
 # API URL
-__PREFIX = "https://vip.creatis.insa-lyon.fr/rest/"
+__PREFIX = None
 
 # API key
 __apikey = None
@@ -75,12 +75,21 @@ def init_thread()  -> requests.Session:
     thread_local.session = new_session()
 
 # -----------------------------------------------------------------------------
+def setVipURL(value):
+    """
+    Set VIP URL.
+    This must be done before setApiKey().
+    """
+    global __PREFIX
+    __PREFIX = value
+
+# -----------------------------------------------------------------------------
 def setApiKey(value) -> bool:
     """
     Return True is correct apikey, False otherwise.
     Raise an error if an other problems occured 
     """
-    url = __PREFIX + 'plateform'
+    url = __PREFIX + 'platform'
     head_test = {
                  'apikey': value,
                 }

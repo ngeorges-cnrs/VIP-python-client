@@ -294,7 +294,9 @@ class VipSession(VipLauncher):
 
     # Overwrite VipLauncher.init() to be compatible with new kwargs
     @classmethod
-    def init(cls, api_key="VIP_API_KEY", verbose=True, **kwargs) -> VipSession:
+    def init(cls, api_key="VIP_API_KEY",
+             vip_url="https://vip.creatis.insa-lyon.fr/rest/",
+             verbose=True, **kwargs) -> VipSession:
         """
         Handshakes with VIP using your own API key. 
         Returns a class instance which properties can be provided as keyword arguments.
@@ -312,7 +314,8 @@ class VipSession(VipLauncher):
 
         - `kwargs` [Optional] (dict): keyword arguments or dictionnary setting properties of the returned instance.     
         """
-        return super().init(api_key=api_key, verbose=verbose, **kwargs)
+        return super().init(api_key=api_key, vip_url=vip_url,
+                            verbose=verbose, **kwargs)
     # ------------------------------------------------
    
     # Upload a dataset on VIP servers
