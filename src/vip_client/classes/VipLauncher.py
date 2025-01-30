@@ -6,6 +6,7 @@ import textwrap
 import time
 from contextlib import contextmanager, nullcontext
 from pathlib import *
+from urllib.parse import urljoin
 
 from vip_client.utils import vip
 
@@ -395,6 +396,7 @@ class VipLauncher():
         cls._VERBOSE = verbose
         # Set VIP URL
         vip.setVipURL(vip_url)
+        cls._VIP_PORTAL = urljoin(vip_url, "/")
         # Check if `api_key` is in a local file or environment variable
         true_key = cls._get_api_key(api_key)
         # Set User API key
