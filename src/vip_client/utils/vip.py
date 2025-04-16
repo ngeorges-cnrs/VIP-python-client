@@ -442,6 +442,13 @@ def pipeline_def(pip_id)->dict:
     manage_errors(rq)
     return rq.json()
 
+# -----------------------------------------------------------------------------
+def get_descriptor(pip_id)->dict:
+    url = __PREFIX + 'pipelines/' + pip_id + '?format=boutiques'
+    rq = SESSION.get(url, headers=__headers)
+    manage_errors(rq)
+    return rq.json()
+
 ################################## OTHER ######################################
 # -----------------------------------------------------------------------------
 def platform_info()->dict:
