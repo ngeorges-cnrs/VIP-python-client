@@ -24,14 +24,31 @@ def init_api():
     vip.setApiKey(vip_apikey)
 
 # get apps and descriptors on a VIP instance
-def get_apps() -> list:
+def get_apps2() -> list:
     init_api()
+    rq = vip.generic_get("admin/appVersions")
+    # XXX this creates a map object and not an array?!
+    #apps = map(lambda r: {"identifier":r["applicationName"]+"/"+r["version"]}, rq) #,"descriptor":json.loads(r.descriptor)
+    apps=[]
+    for r in rq:
+        identifier = r["applicationName"]+"/"+r["version"]
+        desc = json.loads(r["descriptor"])
+        apps.append({"identifier":identifier,"descriptor":ordered(desc)})
+    return apps
+
+def get_apps1() -> list:
     # get apps
+    init_api()
     apps = vip.list_pipeline()
+    apps2 = []
     # add descriptor
     for app in apps:
-        app["descriptor"] = vip.get_descriptor(app.get("identifier"))
-    return apps
+        identifier = app.get("identifier")
+        desc = vip.get_descriptor(identifier)
+        clean_descriptor(desc)
+        a = {"identifier":identifier,"descriptor":ordered(desc)}
+        apps2.append(a)
+    return apps2
 
 # get boutiques descriptors in a directory
 def get_descriptors(dirname: str) -> list:
@@ -58,7 +75,7 @@ def get_descriptors(dirname: str) -> list:
 
 # list apps and descriptors on a VIP instance
 def list_apps():
-    apps = get_apps()
+    apps = get_apps1()
     print("found %d apps on %s:" % (len(apps), os.environ["VIP_API_URL"]))
     for app in apps:
         print("%s: %s" % (app["name"], app["identifier"]))
@@ -79,10 +96,9 @@ def ordered(obj):
     else:
         return obj
 
-# compare two descriptors
-def check_descriptors(d1, d2) -> bool:
-    # VIP adds some fields, remove them:
-    # (XXX should be done on both sides, or directly in VIP)
+def clean_descriptor(d1):
+    if not "online-platform-urls" in d1: # XXX
+        return
     d1.pop("online-platform-urls")
     d1.pop("groups")
     d1.pop("tests")
@@ -98,6 +114,12 @@ def check_descriptors(d1, d2) -> bool:
         item.pop("conditional-path-template")
         item.pop("path-template-stripped-extensions")
         item.pop("file-template")
+
+# compare two descriptors
+def check_descriptors(d1, d2) -> bool:
+    # VIP adds some fields, remove them:
+    # (XXX should be done on both sides, or directly in VIP)
+    clean_descriptor(d1)
     equal = ordered(d1)==ordered(d2)
     if not equal:
         #print(ordered(d1))
@@ -107,15 +129,37 @@ def check_descriptors(d1, d2) -> bool:
         pass
     return equal
 
+def import_app(appobj, is_overwrite):
+    init_api()
+    # XXX context
+    user = "admin@example.com"
+    resources = ["r2"]
+    # XXX TODO preserve original content instead of re-serializing when
+    # importing from a file
+    # XXX TODO validity check: bosh,name conventions, contimg warnings...
+    # error if changing applicationGroups on an existing app: no, just public group (but no log and no detail in errcode)
+    desc = json.dumps(json.dumps(appobj["descriptor"], separators=(',',':')))
+    appname = appobj["descriptor"]["name"]
+    version = appobj["descriptor"]["tool-version"]
+    app = {"name":appname,"applicationGroups":["g2"],"owner":user}
+    appver = {"applicationName":appname,"version":version,"descriptor":desc,"visible":True,"resources":resources,"tags":[],"settings":{}}
+    print(("importing" if not is_overwrite else "overwriting")+" app",appname,version)
+    print("descriptor string:",desc)
+    rq = vip.generic_put("admin/applications/"+app["name"], app)
+    print(rq)
+    rq = vip.generic_put("admin/appVersions/"+app["name"]+"/"+appver["version"], appver)
+    print(rq)
+
 # sync apps from a directory of boutiques descriptors to a VIP instance
 def sync_apps(dirname: str):
-    apps = get_apps()
+    apps = get_apps2()
     descriptors = get_descriptors(dirname)
     # sort both lists, then do one linear pass on them:
     apps.sort(key=lambda app: app["identifier"])
     descriptors.sort(key=lambda desc: desc["identifier"])
     napps = len(apps)
     ndescriptors = len(descriptors)
+    dry_run = False
     i = 0
     j = 0
     while i < napps or j < ndescriptors:
@@ -132,7 +176,8 @@ def sync_apps(dirname: str):
                 print("%s: unchanged" % app["identifier"])
             else:
                 print("%s: descriptor changed" % app["identifier"])
-                # TODO: import with overwrite
+                if not dry_run: # import/overwrite
+                    import_app(desc, True)
             i += 1
             j += 1
         elif app != None:
@@ -140,25 +185,33 @@ def sync_apps(dirname: str):
             i += 1
         elif desc != None:
             print("%s: only in descriptors" % desc["identifier"])
+            if not dry_run: # import
+                import_app(desc, False)
             j += 1
-            # TODO: import
 
 ### main
 def main():
     # XXX TODO proper options/positional parsing
     if len(sys.argv) < 2:
-        fatal_error("usage: vipapps <command>")
+        fatal_error("usage: vipapps <command>\n"
+                    "  <command>: list_apps, list_files, sync")
     command = sys.argv[1]
     if command == "list_apps":
         list_apps()
+    elif command == "show_apps2":
+        print(get_apps2())
+    elif command == "show_apps":
+        print(get_apps1())
     elif command == "list_files":
         if len(sys.argv) < 3:
             fatal_error("usage: list_files <dir>")
         list_files(sys.argv[2])
-    elif command == "sync_apps":
+    elif command == "sync":
         if len(sys.argv) < 3:
-            fatal_error("usage: sync_apps <dir>")
+            fatal_error("usage: sync <dir>")
         sync_apps(sys.argv[2])
+    elif command == "import_app":
+        import_app()
     else:
         fatal_error("unknown command '%s'" % command)
 
