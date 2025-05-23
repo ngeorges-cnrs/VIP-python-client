@@ -13,42 +13,56 @@ def fatal_error(*args, **kwargs):
 
 # initialize VIP API
 def init_api():
-    # get VIP server URL and API key
+    # get server URL
     if not "VIP_API_URL" in os.environ:
         fatal_error("VIP_API_URL not set")
     vip_url = os.environ["VIP_API_URL"]
+    # get API key
     if not "VIP_API_KEY" in os.environ:
         fatal_error("VIP_API_KEY not set")
     vip_apikey = os.environ["VIP_API_KEY"]
+    # configure both, in the right order
     vip.set_vip_url(vip_url)
     vip.setApiKey(vip_apikey)
 
 # get apps and descriptors on a VIP instance
-def get_apps2() -> list:
+
+# new version based on GET /rest/admin/applications
+def get_apps_newapi() -> list:
     init_api()
     rq = vip.generic_get("admin/appVersions")
-    # XXX this creates a map object and not an array?!
+    # XXX why does this create a map object and not an array?!
     #apps = map(lambda r: {"identifier":r["applicationName"]+"/"+r["version"]}, rq) #,"descriptor":json.loads(r.descriptor)
-    apps=[]
+    apps = []
     for r in rq:
-        identifier = r["applicationName"]+"/"+r["version"]
+        name = r["applicationName"]
+        identifier = name+"/"+r["version"]
         desc = json.loads(r["descriptor"])
-        apps.append({"identifier":identifier,"descriptor":ordered(desc)})
+        desc = ordered(desc)
+        apps.append({"name":name,"identifier":identifier,"descriptor":desc})
     return apps
 
-def get_apps1() -> list:
-    # get apps
+# older version based on GET /rest/pipeline. Unused, but preserving compatibility for now. Watch out, apps list may be incomplete in some conditions.
+def get_apps_oldapi() -> list:
     init_api()
-    apps = vip.list_pipeline()
-    apps2 = []
+    pipelines = vip.list_pipeline()
+    apps = []
     # add descriptor
-    for app in apps:
-        identifier = app.get("identifier")
+    for pipeline in pipelines:
+        name = pipeline.get("name")
+        identifier = pipeline.get("identifier")
         desc = vip.get_descriptor(identifier)
         clean_descriptor(desc)
-        a = {"identifier":identifier,"descriptor":ordered(desc)}
-        apps2.append(a)
-    return apps2
+        desc = ordered(desc)
+        apps.append({"name":name,"identifier":identifier,"descriptor":desc})
+    return apps
+
+# wrapper
+def get_apps() -> list:
+    if True:
+        return get_apps_newapi()
+    else:
+        return get_apps_oldapi()
 
 # get boutiques descriptors in a directory
 def get_descriptors(dirname: str) -> list:
@@ -75,7 +89,7 @@ def get_descriptors(dirname: str) -> list:
 
 # list apps and descriptors on a VIP instance
 def list_apps():
-    apps = get_apps1()
+    apps = get_apps()
     print("found %d apps on %s:" % (len(apps), os.environ["VIP_API_URL"]))
     for app in apps:
         print("%s: %s" % (app["name"], app["identifier"]))
@@ -152,7 +166,7 @@ def import_app(appobj, is_overwrite):
 
 # sync apps from a directory of boutiques descriptors to a VIP instance
 def sync_apps(dirname: str):
-    apps = get_apps2()
+    apps = get_apps()
     descriptors = get_descriptors(dirname)
     # sort both lists, then do one linear pass on them:
     apps.sort(key=lambda app: app["identifier"])
@@ -198,10 +212,8 @@ def main():
     command = sys.argv[1]
     if command == "list_apps":
         list_apps()
-    elif command == "show_apps2":
-        print(get_apps2())
     elif command == "show_apps":
-        print(get_apps1())
+        print(get_apps())
     elif command == "list_files":
         if len(sys.argv) < 3:
             fatal_error("usage: list_files <dir>")
