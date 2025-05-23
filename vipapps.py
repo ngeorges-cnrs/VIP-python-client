@@ -8,12 +8,12 @@ import urllib.parse
 import copy
 import re
 from pathlib import Path
+import argparse
 
 # global flags
 init_api_done = False
 getapps_with_oldapi = False
 debug = False
-silent = False
 
 # print message on stderr
 def printerr(*args, **kwargs) -> None:
@@ -104,7 +104,7 @@ def check_container_image(filepath: str, contimg: dict) -> None:
         printerr("warning: %s: image name lacks an explicit path" % filepath) # typically "library/" on dockerhub
 
 # load a descriptor from a file, and check its validity
-def load_descriptor(filepath) -> dict:
+def load_descriptor(filepath, silent=False) -> dict:
     try:
         # just check that we can open the file, to get some cleaner exception
         # than what boutiques.validate() raises on file not found
@@ -152,14 +152,14 @@ def load_descriptor(filepath) -> dict:
 
 # get an identifier-indexed dict of valid boutiques descriptors in a directory.
 # This uses a flat list of *.json files, no recursive directories walk so far.
-def get_descriptor_files(dirname: str) -> dict:
+def get_descriptor_files(dirname: str, silent=False) -> dict:
     local_path = Path(dirname)
     files = {}
     for f in local_path.iterdir():
         if f.is_file() and f.match("*.json"):
             filepath = local_path.joinpath(f)
             try:
-                file = load_descriptor(filepath)
+                file = load_descriptor(filepath, silent=silent)
                 identifier = file["identifier"]
                 if identifier in files and not silent:
                     printerr("ignoring %s: duplicate identifier '%s'"
@@ -255,33 +255,46 @@ def compare_descriptors(d1, d2) -> bool:
     return ordered(clean_descriptor(d1))==ordered(clean_descriptor(d2))
 
 # list apps and descriptors on a VIP instance
-def cmd_list_apps():
+def cmd_list_apps(args):
     apps = get_apps()
     print("found %d apps on %s:" % (len(apps), get_vip_url()))
     for app in apps:
         print("%s: %s" % (app["name"], app["identifier"]))
 
 # list apps from a directory of boutiques descriptors
-def cmd_list_dir(dirname: str):
-    descriptors = get_descriptor_files(dirname)
-    print("found %d valid descriptors in %s:" % (len(descriptors), dirname))
+def cmd_list_dir(args):
+    descriptors = get_descriptor_files(args.dirname, silent=args.silent)
+    print("found %d valid descriptors in %s:" % (len(descriptors), args.dirname))
     for identifier in descriptors:
         file = descriptors[identifier]
         print("%s: %s" % (file["path"].name, identifier))
 
 # import a single descriptor file
-def cmd_import_file(filepath: str):
+def cmd_import_file(args):
+    filepath = args.filename
     file = None
     try:
-        file = load_descriptor(filepath)
+        file = load_descriptor(filepath, silent=args.silent)
     except ValueError as e:
         fatal_error("%s is not a valid descriptor: %s" % (filepath, e))
     import_file(file)
 
+# check a single descriptor file
+def cmd_check_file(args):
+    filepath = args.filename
+    try:
+        file = load_descriptor(filepath, silent=args.silent)
+    except ValueError as e:
+        fatal_error("%s is not a valid descriptor: %s" % (filepath, e))
+    print("OK")
+
 # sync apps from a directory of boutiques descriptors to a VIP instance
-def cmd_sync(dirname: str, dry_run=True, show_orphans=False, show_unchanged=False):
+def cmd_sync(args):
+    # get apps list
     apps = get_apps()
-    files = list(get_descriptor_files(dirname).values())
+    # get files list, converting from dict
+    files = get_descriptor_files(args.dirname, silent=args.silent)
+    files = list(files.values())
     # sort both lists, then do one linear pass on them
     # we could also use dicts and the sets of their keys.
     apps.sort(key=lambda app: app["identifier"])
@@ -305,65 +318,81 @@ def cmd_sync(dirname: str, dry_run=True, show_orphans=False, show_unchanged=Fals
         if app != None and file != None:
             # app identifiers match: compare the descriptors
             if compare_descriptors(app, file):
-                if show_unchanged:
+                if args.show_unchanged:
                     print("%s: unchanged" % app["identifier"])
             else:
-                print("%s: descriptor changed" % app["identifier"])
-                if not dry_run: # import, with overwrite
+                msg = ", overwriting" if args.overwrite else ", but overwrite is false"
+                print("%s: descriptor changed%s" % (app["identifier"], msg))
+                if not args.dry_run and args.overwrite: # import with overwrite
                     import_file(file, is_overwrite=True)
             i += 1
             j += 1
         elif app != None:
-            if show_orphans:
-                print("%s: only in apps" % app["identifier"])
+            if args.show_orphans:
+                print("%s: orphan app with no descriptor" % app["identifier"])
             i += 1
         elif file != None:
-            print("%s: only in files" % file["identifier"])
-            if not dry_run: # import new app
+            print("%s: new app" % file["identifier"])
+            if not args.dry_run: # import new app
                 import_file(file, is_overwrite=False)
             j += 1
 
+def cmd_show_apps(args):
+    print(get_apps())
+
+def cmd_show_files(args):
+    print(get_descriptor_files(args.dirname, silent=args.silent))
+
 ### main
 def main():
-    # XXX TODO proper options/positional parsing, import argparse...
-    if len(sys.argv) < 2:
-        fatal_error("usage: vipapps <command>\n"
-                    "  <command>: list_apps, list_dir, import_file, sync")
-    command = sys.argv[1]
-    if command == "list_apps":
-        cmd_list_apps()
-    # XXX file index (csv, with groups/resources) + normalized desc.name
-    elif command == "list_dir":
-        if len(sys.argv) < 3:
-            fatal_error("usage: list_dir <dir>")
-        cmd_list_dir(sys.argv[2])
-    elif command == "import_file":
-        if len(sys.argv) < 1:
-            fatal_error("usage: import_file <file>")
-        cmd_import_file(sys.argv[2])
-    elif command == "check_file":
-        if len(sys.argv) < 3:
-            fatal_error("usage: check_file <file>")
-        filepath = sys.argv[2]
-        try:
-            file = load_descriptor(filepath)
-        except ValueError as e:
-            fatal_error("%s is not a valid descriptor: %s" % (filepath, e))
-        print("OK")
-    elif command == "sync":
-        if len(sys.argv) < 3:
-            fatal_error("usage: sync <dir>")
-        #cmd_sync(sys.argv[2], dry_run=True, show_orphans=True, show_unchanged=False)
-        cmd_sync(sys.argv[2], dry_run=False, show_orphans=False, show_unchanged=False)
-    # debug commands
-    elif command == "show_apps":
-        print(get_apps())
-    elif command == "show_files":
-        if len(sys.argv) < 3:
-            fatal_error("usage: show_files <dir>")
-        print(get_descriptor_files(sys.argv[2]))
-    else:
-        fatal_error("unknown command '%s'" % command)
+    parser = argparse.ArgumentParser(prog="vipapps",
+                                     description="manage vip apps descriptors")
+    subparsers = parser.add_subparsers()
+    # check_file
+    cmd = subparsers.add_parser("check_file")
+    cmd.add_argument("filename")
+    cmd.add_argument("--silent", action="store_true", help="no warnings")
+    cmd.set_defaults(func=cmd_check_file)
+    # import_file - XXX should precheck if app exists
+    cmd = subparsers.add_parser("import_file")
+    cmd.add_argument("filename")
+    cmd.add_argument("--silent", action="store_true", help="no warnings")
+    cmd.set_defaults(func=cmd_import_file)
+    # list_apps
+    cmd = subparsers.add_parser("list_apps")
+    cmd.set_defaults(func=cmd_list_apps)
+    # list_dir
+    cmd = subparsers.add_parser("list_dir")
+    cmd.add_argument("dirname")
+    cmd.add_argument("--silent", action="store_true", help="no warnings")
+    cmd.set_defaults(func=cmd_list_dir)
+    # sync
+    cmd = subparsers.add_parser("sync")
+    cmd.add_argument("dirname")
+    cmd.add_argument("--silent", action="store_true", help="no warnings")
+    cmd.add_argument("--dry-run", action="store_true", help="perform no changes")
+    cmd.add_argument("--show-orphans", action="store_true", help="show apps in VIP-portal with no descriptor in <dirname>")
+    cmd.add_argument("--show-unchanged", action="store_true", help="show VIP-portal apps which match their descriptor in <dirname>")
+    cmd.add_argument("--overwrite", action="store_true", help="overwrite existing apps whose descriptor changed")
+    cmd.set_defaults(func=cmd_sync)
+    # internal/debug subcommands
+    if debug:
+        cmd = subparsers.add_parser("show_apps", help=argparse.SUPPRESS)
+        cmd.set_defaults(func=cmd_show_apps)
+        cmd = subparsers.add_parser("show_files", help=argparse.SUPPRESS)
+        cmd.add_argument("dirname")
+        cmd.set_defaults(func=cmd_show_files)
+
+    # XXX TODO file index (csv, with groups/resources) + normalized desc.name
+    # parse args
+    argv = sys.argv
+    argv.pop(0)
+    args = parser.parse_args(argv)
+    if not hasattr(args, "func"):
+        parser.print_help()
+        exit(1)
+    args.func(args)
+    exit(0)
 
 ### entry point
 if __name__ == "__main__":
