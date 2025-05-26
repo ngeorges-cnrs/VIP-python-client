@@ -314,12 +314,6 @@ def generic_get(endpoint)->list:
     manage_errors(rq)
     return rq.json()
 
-def generic_post(endpoint,data)->list:
-    url = __PREFIX + endpoint
-    rq = SESSION.post(url, headers=__headers, json=data)
-    manage_errors(rq)
-    return rq.json()
-
 def generic_put(endpoint,data)->list:
     url = __PREFIX + endpoint
     rq = SESSION.put(url, headers=__headers, json=data)
@@ -456,13 +450,6 @@ def list_pipeline()->list:
 # -----------------------------------------------------------------------------
 def pipeline_def(pip_id)->dict:
     url = __PREFIX + 'pipelines/' + pip_id
-    rq = SESSION.get(url, headers=__headers)
-    manage_errors(rq)
-    return rq.json()
-
-# -----------------------------------------------------------------------------
-def get_descriptor(pip_id)->dict:
-    url = __PREFIX + 'pipelines/' + pip_id + '?format=boutiques'
     rq = SESSION.get(url, headers=__headers)
     manage_errors(rq)
     return rq.json()
