@@ -514,17 +514,17 @@ def add_subcommand(subparsers, name, func, help=None):
     return cmd
 
 def add_import_options(cmd):
-    cmd.add_argument("--dry-run", action="store_true", help="perform no changes")
+    cmd.add_argument("--dry-run", action="store_true", help="perform no changes, just show what would be done")
     cmd.add_argument("--overwrite", action="store_true", help="overwrite existing apps")
     cmd.add_argument("--force-update", action="store_true", help="force update even if descriptor didn't change")
-    cmd.add_argument("--owner", type=str)
-    cmd.add_argument("--groups", type=str)
-    cmd.add_argument("--resources", type=str)
+    cmd.add_argument("--owner", type=str, help="set owner for new apps")
+    cmd.add_argument("--groups", type=str, help="set groups for new apps")
+    cmd.add_argument("--resources", type=str, help="set resources for new or update apps")
 
 def add_sync_options(cmd):
     add_import_options(cmd)
-    cmd.add_argument("--show-orphans", action="store_true", help="show apps in VIP-portal with no descriptor in <dirname>")
-    cmd.add_argument("--show-unchanged", action="store_true", help="show VIP-portal apps which match their descriptor in <dirname>")
+    cmd.add_argument("--show-orphans", action="store_true", help="show apps in VIP-portal with no descriptor in source")
+    cmd.add_argument("--show-unchanged", action="store_true", help="show VIP-portal apps which match their descriptor")
 
 ### main
 def main():
