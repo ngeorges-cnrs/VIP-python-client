@@ -12,7 +12,6 @@ import argparse
 
 # global flags
 init_api_done = False
-getapps_with_oldapi = False
 debug = False
 
 # print message on stderr
@@ -49,33 +48,13 @@ def convert_app_version(av):
     name = av["applicationName"]
     identifier = name+"/"+av["version"]
     desc = json.loads(av["descriptor"])
-    return {"name":name,"identifier":identifier,"descriptor":desc,"rawtext":av["descriptor"]}
-
-# get_apps: new version based on GET /rest/admin/applications
-def get_apps_newapi() -> list:
-    init_api()
-    app_versions = vip.generic_get("admin/appVersions")
-    return list(map(convert_app_version, app_versions))
-
-# get_apps: older version based on GET /rest/pipeline. Unused, but preserving compatibility for now just in case. Watch out, apps list may be incomplete in some conditions (e.g. apps without groups). This does 1+N requests.
-def get_apps_oldapi() -> list:
-    init_api()
-    pipelines = vip.list_pipeline()
-    apps = []
-    for pipeline in pipelines:
-        name = pipeline.get("name")
-        identifier = pipeline.get("identifier")
-        # get descriptor
-        desc = vip.get_descriptor(identifier)
-        apps.append({"name":name,"identifier":identifier,"descriptor":desc})
-    return apps
+    return {"name":name,"identifier":identifier,"descriptor":desc,"rawtext":av["descriptor"],"resources":av["resources"],"tags":av["tags"],"is_visible":av["visible"],"settings":av["settings"]}
 
 # get_apps(): get a list of apps and descriptors from a VIP-portal instance
 def get_apps() -> list:
-    if getapps_with_oldapi:
-        return get_apps_oldapi()
-    else:
-        return get_apps_newapi()
+    init_api()
+    app_versions = vip.generic_get("admin/appVersions")
+    return list(map(convert_app_version, app_versions))
 
 # get_app(): get a single app
 def get_app(identifier) -> object:
@@ -83,7 +62,9 @@ def get_app(identifier) -> object:
     try:
         appver = vip.generic_get("admin/appVersions/"+urllib.parse.quote(identifier))
     except RuntimeError as e:
-        # XXX this is not a very good way to test whether an app exists or not
+        # XXX this is not a very good way to test whether an app exists or not:
+        # something that explicitly searches for and idea and returns true/false
+        # with 200 OK would be more reliable.
         # print(e) # Error 8000 from VIP 
         return None
     return convert_app_version(appver)
@@ -185,44 +166,82 @@ def get_descriptor_files(dirname: str, silent=False) -> dict:
                 pass
     return files
 
-# import an app from a descriptor file to a VIP-portal instance
-# file is assumed already loaded and checked, VIP-portal will re-check anyways
-def import_file(file, is_overwrite=False, dry_run=True):
-    init_api()
-    # XXX context - these should be parameters. Also add "origin".
-    user = "admin@example.com" # could/should be automatic server-side
-    groups = ["g2"]
-    resources = ["r2"]
-    citation = "" # must be non-null
+class AppFields:
+    # XXX TODO: preserve doi, new "origin" field?
+    # XXX somewhat obscure behavior: owner/group/citation are app level,
+    # not appversion, and can't be changed on update (see import_file())
+    # This should either be ajusted to that all fields can be edited (impacting
+    # GET requests), or made more explicit in command-line args.
+
+    # default values for a new app:
+    owner = None
+    groups = []
+    citation = ""
+    resources = []
     tags = []
     settings = {}
     is_visible = True
+    # app is defined on update only, and contains the existing appversion
+    # args is defined everytime, and contains user-provided values
+    def __init__(self, app=None, args=None):
+        # on update, default to keeping existing values
+        if app != None:
+            self.is_visible = app["is_visible"]
+            self.resources = app["resources"]
+            self.tags = app["tags"]
+            self.settings = app["settings"]
+        # override with args values when defined
+        # note an important difference between None and "" here:
+        # . None means the arg was not specified, so its value is unchanged
+        # . "" means 'set to blank'
+        # we only allow a subset of fields in args:
+        # . at app level (creation only): owner and groups
+        # . at appversion level (creation or update): resource
+        if args != None:
+            if args.owner != None:
+                self.owner = None if args.owner == "" else args.owner
+            if args.groups != None:
+                self.groups = [] if args.groups == "" else args.groups.split(",")
+            if args.resources != None:
+                self.resources = [] if args.resources == "" else args.resources.split(",")
+
+
+# import an app from a descriptor file to a VIP-portal instance
+# file is assumed already loaded and checked, VIP-portal will re-check anyways
+def import_file(file, fields, is_overwrite=False, dry_run=True):
+    init_api()
     # create app and appVersion objects for the /rest/admin API
     appname = file["descriptor"]["name"]
     version = file["descriptor"]["tool-version"]
     descriptor = file["rawtext"]
-    app = {"name":appname,"applicationGroups":groups,"owner":user,"citation":citation}
-    app_url = "admin/applications/"+urllib.parse.quote(app["name"])
-    appver = {"applicationName":appname,"version":version,"descriptor":descriptor,"visible":is_visible,"resources":resources,"tags":tags,"settings":settings}
-    appver_url = "admin/appVersions/"+urllib.parse.quote(app["name"])+"/"+urllib.parse.quote(appver["version"])
+    app = {"name":appname,"applicationGroups":fields.groups,"owner":fields.owner,"citation":fields.citation}
+    app_url = "admin/applications/" + urllib.parse.quote(appname)
+    appver = {"applicationName":appname,"version":version,"descriptor":descriptor,"visible":fields.is_visible,"resources":fields.resources,"tags":fields.tags,"settings":fields.settings}
+    appver_url = "admin/appVersions/" + urllib.parse.quote(appname) + "/" + urllib.parse.quote(version)
     msg = ""
     if is_overwrite:
         msg += " (overwrite)"
     if dry_run:
         msg += " (dry run)"
-    print("importing app %s %s%s" % (appname,version,msg))
+    # never change app on update: doing so would be arguable if there are
+    # several appversions per app, and also it avoids having to fetch app
+    # fields on GET (see Appfields())
+    can_put_app = not is_overwrite
+    print("importing app %s %s%s" % (appname, version, msg))
     if debug:
         print("descriptor string:", descriptor)
     if dry_run:
-        print("PUT %s %s" % (app_url, app))
-        print("PUT %s %s" % (appver_url, app))
+        if can_put_app:
+            print("PUT %s %s" % (app_url, app))
+        print("PUT %s %s" % (appver_url, appver))
         return
-    r = vip.generic_put(app_url, app)
-    if debug:
-        print("app updated:",r)
+    if can_put_app:
+        r = vip.generic_put(app_url, app)
+        if debug:
+            print("app updated:", r)
     r = vip.generic_put(appver_url, appver)
     if debug:
-        print("appVersion updated:",r)
+        print("appVersion updated:", r)
 
 # recursive ordering of nested list/dict structures
 # it transforms any dict into a list of 2-tuples to make lists of dicts sortable
@@ -277,21 +296,24 @@ def compare_descriptors(d1, d2) -> bool:
     return ordered(clean_descriptor(d1))==ordered(clean_descriptor(d2))
 
 # import helpers
-def import_existing_app(app, file, show_unchanged=True, is_overwrite=False,
-                        dry_run=True):
+def import_existing_app(app, file, args=None,
+                        show_unchanged=True, is_overwrite=False,
+                        dry_run=True, force_update=False):
     identifier = app["identifier"]
-    if compare_descriptors(app, file):
+    fields = AppFields(app=app, args=args)
+    # XXX here we could also compare non-descriptor fields?
+    if compare_descriptors(app, file) and not force_update:
         if show_unchanged:
             print("%s: unchanged" % identifier)
     elif not is_overwrite:
-        print("%s: descriptor changed, but overwrite is false" % identifier)
+        print("%s: changes detected, but overwrite is false" % identifier)
     else: # import with overwrite
-        print("%s: descriptor changed, overwriting" % identifier)
-        import_file(file, is_overwrite=True, dry_run=dry_run)
+        print("%s: changes detected, overwriting" % identifier)
+        import_file(file, fields, is_overwrite=True, dry_run=dry_run)
 
-def import_new_app(file, dry_run=True):
+def import_new_app(file, fields, dry_run=True):
         print("%s: new app" % file["identifier"])
-        import_file(file, is_overwrite=False, dry_run=dry_run)
+        import_file(file, fields, is_overwrite=False, dry_run=dry_run)
 
 # list apps and descriptors on a VIP instance
 def cmd_list_apps(args):
@@ -322,10 +344,12 @@ def cmd_import_file(args):
     version = file["descriptor"]["tool-version"]
     app = get_app(file["identifier"])
     if app != None: # app already exists
-        import_existing_app(app, file, show_unchanged=True,
-                            is_overwrite=args.overwrite, dry_run=args.dry_run)
+        import_existing_app(app, file, args=args, show_unchanged=True,
+                            is_overwrite=args.overwrite,
+                            dry_run=args.dry_run,
+                            force_update=args.force_update)
     else: # new app
-        import_new_app(file, dry_run=args.dry_run)
+        import_new_app(file, AppFields(args=args), dry_run=args.dry_run)
 
 # check a single descriptor file
 def cmd_check_file(args):
@@ -365,9 +389,11 @@ def cmd_sync(args):
                 app = None
         if app != None and file != None:
             # app identifiers match: compare descriptors and import if changed
-            import_existing_app(app, file, show_unchanged=args.show_unchanged,
+            import_existing_app(app, file, args=args,
+                                show_unchanged=args.show_unchanged,
                                 is_overwrite=args.overwrite,
-                                dry_run=args.dry_run)
+                                dry_run=args.dry_run,
+                                force_update=args.force_update)
             i += 1
             j += 1
         elif app != None:
@@ -375,7 +401,7 @@ def cmd_sync(args):
                 print("%s: orphan app with no descriptor" % app["identifier"])
             i += 1
         elif file != None: # import new app
-            import_new_app(file, dry_run=args.dry_run)
+            import_new_app(file, AppFields(args=args), dry_run=args.dry_run)
             j += 1
 
 def cmd_show_apps(args):
@@ -383,6 +409,15 @@ def cmd_show_apps(args):
 
 def cmd_show_files(args):
     print(get_descriptor_files(args.dirname, silent=args.silent))
+
+def add_import_options(cmd):
+    cmd.add_argument("--silent", action="store_true", help="no warnings")
+    cmd.add_argument("--dry-run", action="store_true", help="perform no changes")
+    cmd.add_argument("--overwrite", action="store_true", help="overwrite existing apps")
+    cmd.add_argument("--force-update", action="store_true", help="force update even if descriptor didn't change")
+    cmd.add_argument("--owner", type=str)
+    cmd.add_argument("--groups", type=str)
+    cmd.add_argument("--resources", type=str)
 
 ### main
 def main():
@@ -397,9 +432,7 @@ def main():
     # import_file
     cmd = subparsers.add_parser("import_file")
     cmd.add_argument("filename")
-    cmd.add_argument("--silent", action="store_true", help="no warnings")
-    cmd.add_argument("--dry-run", action="store_true", help="perform no changes")
-    cmd.add_argument("--overwrite", action="store_true", help="overwrite existing app")
+    add_import_options(cmd)
     cmd.set_defaults(func=cmd_import_file)
     # list_apps
     cmd = subparsers.add_parser("list_apps")
@@ -412,11 +445,9 @@ def main():
     # sync
     cmd = subparsers.add_parser("sync")
     cmd.add_argument("dirname")
-    cmd.add_argument("--silent", action="store_true", help="no warnings")
-    cmd.add_argument("--dry-run", action="store_true", help="perform no changes")
+    add_import_options(cmd)
     cmd.add_argument("--show-orphans", action="store_true", help="show apps in VIP-portal with no descriptor in <dirname>")
     cmd.add_argument("--show-unchanged", action="store_true", help="show VIP-portal apps which match their descriptor in <dirname>")
-    cmd.add_argument("--overwrite", action="store_true", help="overwrite existing apps whose descriptor changed")
     cmd.set_defaults(func=cmd_sync)
     # internal/debug subcommands
     if debug:
