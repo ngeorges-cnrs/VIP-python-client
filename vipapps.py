@@ -75,6 +75,22 @@ def descriptor_filename(appname, appversion):
     filename = appname + "-" + appversion + ".json"
     return filename.replace(" ", "_")
 
+# normalized container image name
+def container_image_name(contimg: dict):
+    image = contimg["image"]
+    if ":" not in image:
+        return None
+    # tag is mandatory in this context
+    img_tag = image.split(":")
+    if len(img_tag) != 2:
+        return None
+    items = img_tag[0].split("/")
+    if len(items) < 1:
+        return None
+    name = items[len(items) - 1]
+    tag = img_tag[1]
+    return name + "-" + tag
+
 # a picky checker on the "container-image" section of descriptors:
 # . avoid useless values for "index"
 # . it checks that image names have the form "host.domain/path/repository:tag"
@@ -276,6 +292,8 @@ class AppFields:
                 self.groups = [] if args.groups == "" else args.groups.split(",")
             if args.resources != None:
                 self.resources = [] if args.resources == "" else args.resources.split(",")
+            if args.visible != None:
+                self.is_visible = args.visible
 
 # import an app from a descriptor file to a VIP-portal instance
 # file is assumed already loaded and checked, VIP-portal will re-check anyways
@@ -425,12 +443,28 @@ def perform_sync(args, apps, files):
             import_new_app(file, AppFields(args=args), dry_run=args.dry_run)
             j += 1
 
+# helper for list_* commands
+def print_app(label: str, identifier: str, desc: dict,
+              show_descriptor=False, show_imagename=False):
+    print("%s: %s" % (label, identifier))
+    # normalized descriptor filename:
+    # print("  %s" % descriptor_filename(desc["name"], desc["tool-version"]))
+    if show_descriptor:
+        print("  descriptor: %s" % desc)
+    if show_imagename:
+        imagename = None
+        if "container-image" in desc:
+            imagename = container_image_name(desc["container-image"])
+        print("  imagename: %s" % imagename)
+
 # list apps and descriptors on a VIP instance
 def cmd_list_apps(args):
     apps = get_apps()
     print("found %d apps on %s:" % (len(apps), get_vip_url()))
     for app in apps:
-        print("%s: %s" % (app["name"], app["identifier"]))
+        print_app(app["name"], app["identifier"], app["descriptor"],
+                  show_descriptor=args.show_descriptor,
+                  show_imagename=args.show_imagename)
 
 # list apps from a directory of boutiques descriptors
 def cmd_list_dir(args):
@@ -438,7 +472,9 @@ def cmd_list_dir(args):
     print("found %d valid descriptors in %s:" % (len(descriptors), args.dirname))
     for identifier in descriptors:
         file = descriptors[identifier]
-        print("%s: %s" % (file["path"].name, identifier))
+        print_app(file["path"].name, identifier, file["descriptor"],
+                  show_descriptor=args.show_descriptor,
+                  show_imagename=args.show_imagename)
 
 # list apps from a CSV index
 def cmd_list_index(args):
@@ -446,7 +482,9 @@ def cmd_list_index(args):
     print("found %d valid descriptors in %s:" % (len(descriptors), args.filename))
     for identifier in descriptors:
         file = descriptors[identifier]
-        print("%s: %s" % (file["path"].name, identifier))
+        print_app(file["path"].name, identifier, file["descriptor"],
+                  show_descriptor=args.show_descriptor,
+                  show_imagename=args.show_imagename)
 
 # import a single descriptor file
 def cmd_import_file(args):
@@ -513,6 +551,21 @@ def add_subcommand(subparsers, name, func, help=None):
     cmd.set_defaults(func=func)
     return cmd
 
+# helper to allow --visible=true/false, with default None
+def parse_bool(val):
+    if isinstance(val, bool):
+        return val
+    if val.lower() in ("true", "1"):
+        return True
+    elif val.lower() in ("false", "0"):
+        return False
+    else:
+        raise argparse.ArgumentTypeError("boolean expected")
+
+def add_list_options(cmd):
+    cmd.add_argument("--show-descriptor", action="store_true", help="show parsed descriptor content")
+    cmd.add_argument("--show-imagename", action="store_true", help="show container image name")
+
 def add_import_options(cmd):
     cmd.add_argument("--dry-run", action="store_true", help="perform no changes, just show what would be done")
     cmd.add_argument("--overwrite", action="store_true", help="overwrite existing apps")
@@ -520,6 +573,7 @@ def add_import_options(cmd):
     cmd.add_argument("--owner", type=str, help="set owner for new apps")
     cmd.add_argument("--groups", type=str, help="set groups for new apps")
     cmd.add_argument("--resources", type=str, help="set resources for new or update apps")
+    cmd.add_argument("--visible", type=parse_bool, help="set visibility for new or update apps")
 
 def add_sync_options(cmd):
     add_import_options(cmd)
@@ -528,8 +582,15 @@ def add_sync_options(cmd):
 
 ### main
 def main():
+    helpdetail = (
+        "Manage VIP apps descriptors.\n"
+        "For commands that communicate with a VIP instance, set:\n"
+        "export VIP_API_URL=...  # VIP-portal host URL (without /rest)\n"
+        "export VIP_API_KEY=...  # Your API key (admin level required)\n"
+        )
     parser = argparse.ArgumentParser(prog="vipapps",
-                                     description="manage vip apps descriptors")
+                                     formatter_class=argparse.RawTextHelpFormatter,
+                                     description=helpdetail)
     subparsers = parser.add_subparsers()
     # check_file
     cmd = add_subcommand(subparsers, "check_file", cmd_check_file,
@@ -543,14 +604,17 @@ def main():
     # list_apps
     cmd = add_subcommand(subparsers, "list_apps", cmd_list_apps,
                          help="list appversions on a VIP instance")
+    add_list_options(cmd)
     # list_dir
     cmd = add_subcommand(subparsers, "list_dir", cmd_list_dir,
                          help="list descriptors in a directory")
     cmd.add_argument("dirname")
+    add_list_options(cmd)
     # list_index
     cmd = add_subcommand(subparsers, "list_index", cmd_list_index,
                          help="list descriptors in a CSV index")
     cmd.add_argument("filename")
+    add_list_options(cmd)
     # sync_dir
     cmd = add_subcommand(subparsers, "sync_dir", cmd_sync_dir,
                          help="import descriptors from a directory")
