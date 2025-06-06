@@ -498,13 +498,28 @@ def print_app(label: str, identifier: str, desc: dict,
     print("%s: %s" % (label, identifier))
     # normalized descriptor filename:
     # print("  %s" % descriptor_filename(desc["name"], desc["tool-version"]))
+    # descriptor content:
     if show_descriptor:
         print("  descriptor: %s" % desc)
+    # container image info:
     if show_imagename:
         imagename = None
+        imageurl = None
         if "container-image" in desc:
-            imagename = container_image_name(desc["container-image"])
+            contimg = desc["container-image"]
+            imagename = container_image_name(contimg)
+            imageurl = contimg["image"]
+        # normalized container image name
         print("  imagename: %s" % imagename)
+        if imagename is not None and imageurl is not None:
+            # docker pull command:
+            print("  install-docker: docker pull %s" % imageurl)
+            # singularity build command:
+            # . sandbox dir output (remove --sandbox for sif output)
+            # . local docker daemon for source (use docker:// to download)
+            # . may also need APPTAINER_TMPDIR=$PWD if /tmp is small
+            print("  install-singularity: singularity build --sandbox --fix-perms ./%s docker-daemon://%s" % (imagename, imageurl))
+
 
 # list apps and descriptors on a VIP instance
 def cmd_list_apps(args):
