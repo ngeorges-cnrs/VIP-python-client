@@ -26,7 +26,7 @@ def fatal_error(*args, **kwargs) -> None:
 
 # get VIP server URL
 def get_vip_url() -> str:
-    if not "VIP_API_URL" in os.environ:
+    if "VIP_API_URL" not in os.environ:
         fatal_error("VIP_API_URL not set")
     return os.environ["VIP_API_URL"]
 
@@ -36,7 +36,7 @@ def init_api() -> None:
     if init_api_done:
         return
     # get API key
-    if not "VIP_API_KEY" in os.environ:
+    if "VIP_API_KEY" not in os.environ:
         fatal_error("VIP_API_KEY not set")
     vip_apikey = os.environ["VIP_API_KEY"]
     # configure both, in the right order
@@ -73,7 +73,7 @@ def get_parentapp(appname) -> object:
     init_api()
     try:
         appver = vip.generic_get("admin/applications/"+urllib.parse.quote(appname))
-    except RuntimeError as e:
+    except RuntimeError:
         # XXX see get_appversion
         return None
     return convert_parentapp(appver)
@@ -90,11 +90,11 @@ def get_appversion(identifier) -> object:
     init_api()
     try:
         appver = vip.generic_get("admin/appVersions/"+urllib.parse.quote(identifier))
-    except RuntimeError as e:
+    except RuntimeError:
         # XXX this is not a very good way to test whether an app exists or not:
         # something that explicitly searches for an id and returns true/false
         # with 200 OK would be more reliable.
-        # print(e) # Error 8000 from VIP 
+        # print(e) # Error 8000 from VIP
         return None
     return convert_appversion(appver)
 
@@ -164,7 +164,7 @@ def load_descriptor(filepath, silent=False) -> dict:
     # Also note that ValueError is raised by our own checks,
     # and also a parent of simplejson.errors.JSONDecodeError in boutiques
     except (ValueError,boutiques.DescriptorValidationError) as e:
-        if type(e) == boutiques.DescriptorValidationError:
+        if type(e) is boutiques.DescriptorValidationError:
             raise ValueError("bosh validate failed")
         else:
             raise e
@@ -183,7 +183,7 @@ def load_descriptor(filepath, silent=False) -> dict:
             raise ValueError("invalid version '%s'" % appversion)
         # check container-image (just warnings)
         if not silent:
-            if not "container-image" in desc:
+            if "container-image" not in desc:
                 printerr("warning: %s: no container-image" % filepath)
             else:
                 check_container_image(filepath, desc["container-image"])
@@ -219,7 +219,7 @@ def get_files_from_dir(dirname: str, silent=False) -> dict:
         if f.is_file() and f.match("*.json"):
             filepath = local_path.joinpath(f)
             file = add_file(files, filepath, silent=silent)
-            if file != None:
+            if file is not None:
                 identifier = file["identifier"]
                 files[identifier] = file
     return files
@@ -238,7 +238,7 @@ def csv_add_fields(file, csv_header, row, identifier, silent=False):
         val = row[csv_header["settings"]]
         try:
             file["settings"] = parse_map(val)
-        except argparse.ArgumentTypeError as e:
+        except argparse.ArgumentTypeError:
             if not silent:
                 printerr("warning: %s: ignoring invalid settings '%s'"
                          % (identifier, val))
@@ -255,7 +255,7 @@ def get_files_from_index(indexfile: str, silent=False) -> dict:
     with open(indexfile) as f:
         rows = csv.reader(f, delimiter=',', quotechar='"')
         for row in rows:
-            if csv_header == None: # header
+            if csv_header is None: # header
                 csv_header = {}
                 for pos,name in enumerate(row):
                     csv_header[name] = pos
@@ -284,7 +284,7 @@ def get_files_from_index(indexfile: str, silent=False) -> dict:
             filepath = Path(os.path.join(os.path.dirname(indexfile), filepath))
         # parse descriptor
         file = add_file(files, filepath, silent=silent)
-        if file != None:
+        if file is not None:
             # got a valid descriptor file
             identifier = file["identifier"]
             desc = file["descriptor"]
@@ -330,7 +330,7 @@ class AppFields:
     def __init__(self, parent=None, app=None, args=None):
         self.parent = parent
         # on update, default to keeping existing values
-        if app != None:
+        if app is not None:
             self.is_visible = app["is_visible"]
             self.resources = app["resources"]
             self.tags = app["tags"]
@@ -345,18 +345,18 @@ class AppFields:
         # we only allow a subset of fields in args:
         # . at app level (creation only): owner and groups
         # . at appversion level (creation or update): resource
-        if args != None:
-            if args.owner != None:
+        if args is not None:
+            if args.owner is not None:
                 self.owner = None if args.owner == "" else args.owner
-            if args.groups != None:
+            if args.groups is not None:
                 self.groups = args.groups
-            if args.resources != None:
+            if args.resources is not None:
                 self.resources = args.resources
-            if args.visible != None:
+            if args.visible is not None:
                 self.is_visible = args.visible
-            if args.settings != None:
+            if args.settings is not None:
                 self.settings = args.settings
-            if args.source != None:
+            if args.source is not None:
                 self.source = args.source
 
 # import an app from a descriptor file to a VIP-portal instance
@@ -375,7 +375,7 @@ def import_file(file, fields, is_overwrite=False, dry_run=True, verbose=False):
     # never change app on update: doing so would be arguable if there are
     # several appversions per app
     print("importing app %s %s%s" % (appname, version, msg))
-    if fields.parent == None and is_overwrite == False:
+    if fields.parent is None and not is_overwrite:
         groups = list(map(lambda g:{"name":g}, fields.groups))
         app = {"name":appname,"groups":groups,"owner":fields.owner,"citation":fields.citation}
         app_url = "admin/applications/" + urllib.parse.quote(appname)
@@ -406,7 +406,7 @@ def ordered(obj) -> object:
 
 # delete an array key if present and empty
 def pop_if_empty(desc, field) -> None:
-    if field in desc and type(desc[field]) == list and len(desc[field]) == 0:
+    if field in desc and type(desc[field]) is list and len(desc[field]) == 0:
         desc.pop(field)
 
 # descriptor "normalization"
@@ -462,7 +462,7 @@ def import_existing_app(app, file, fields, is_overwrite=False,
                     dry_run=dry_run, verbose=verbose)
 
 def import_new_app(file, fields, dry_run=True, verbose=False):
-    if fields.parent != None:
+    if fields.parent is not None:
         print("%s: new appversion" % file["identifier"])
     else:
         print("%s: new app+appversion" % file["identifier"])
@@ -486,12 +486,12 @@ def perform_sync(args, parents, apps, files):
         # identifiers match:
         # . if they don't, process the first one in sort order, and move on
         # . if they do, compare their descriptors
-        if app != None and file != None:
+        if app is not None and file is not None:
             if app["identifier"] < file["identifier"]:
                 file = None
             elif app["identifier"] > file["identifier"]:
                 app = None
-        if file != None:
+        if file is not None:
             # set field values from global args + per-file overrides
             appname = file["descriptor"]["name"]
             parent = parents[appname] if appname in parents else None
@@ -503,7 +503,7 @@ def perform_sync(args, parents, apps, files):
             if "source" in file:
                 fields.source = file["source"]
             # do the actual sync
-            if app != None:
+            if app is not None:
                 # identifiers match: compare descriptors and import if changed
                 import_existing_app(app, file, fields,
                                     is_overwrite=args.overwrite,
@@ -515,7 +515,7 @@ def perform_sync(args, parents, apps, files):
                 import_new_app(file, fields,
                                dry_run=args.dry_run, verbose=args.verbose)
                 j += 1
-        elif app != None:
+        elif app is not None:
             if args.show_orphans:
                 print("%s: orphan app with no descriptor" % app["identifier"])
             i += 1
@@ -574,11 +574,10 @@ def cmd_import_file(args):
         fatal_error("%s is not a valid descriptor: %s" % (filepath, e))
     # check if app exists
     appname = file["descriptor"]["name"]
-    version = file["descriptor"]["tool-version"]
     parent = get_parentapp(appname)
     app = get_appversion(file["identifier"])
     fields = AppFields(app=app, args=args, parent=parent)
-    if app != None: # app already exists
+    if app is not None: # app already exists
         import_existing_app(app, file, fields,
                             is_overwrite=args.overwrite,
                             dry_run=args.dry_run, verbose=args.verbose,
@@ -591,7 +590,7 @@ def cmd_import_file(args):
 def cmd_check_file(args):
     filepath = args.filename
     try:
-        file = load_descriptor(filepath, silent=args.silent)
+        load_descriptor(filepath, silent=args.silent)
     except ValueError as e:
         fatal_error("%s is not a valid descriptor: %s" % (filepath, e))
     print("OK")
