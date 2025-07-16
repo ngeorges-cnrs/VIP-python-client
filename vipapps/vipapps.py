@@ -1,3 +1,11 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "boutiques>=0.5.29",
+#   "requests>=2.32.3",
+#   "vip_client"
+# ]
+# ///
 from vip_client.utils import vip
 import os
 import sys
